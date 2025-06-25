@@ -1,0 +1,450 @@
+# Nexus Supply Chain Management Platform - Project Plan
+
+## 1. Introduction and Overview
+
+The Nexus platform is designed to revolutionize supply chain management by providing businesses with a comprehensive solution for inventory, logistics, and shipping activities. It aims to enhance operational efficiency, reduce costs, and improve visibility across the entire supply chain.
+
+**Key Features:**
+*   **Inventory Management:** Real-time visibility of stock levels, warehouse locations, and inventory movements.
+*   **Logistics Management:** Optimization of transportation routes, fleet management, and carrier integration.
+*   **Shipping Management:** Streamlined order fulfillment, packing, label generation, and dispatch processes.
+*   **Real-time Tracking:** End-to-end tracking of goods in transit and warehouse inventory.
+*   **Automated Workflows:** Automation of key supply chain processes like order processing, replenishment, and shipping notifications.
+*   **ERP System Integration:** Seamless data exchange with popular Enterprise Resource Planning (ERP) systems.
+
+## 2. System Architecture
+
+Nexus will be built using a **microservices architecture** to ensure scalability, resilience, independent deployability, and maintainability. Services will communicate primarily via RESTful APIs for synchronous requests and Kafka for asynchronous event-driven communication.
+
+**Core Principles:**
+*   **Loose Coupling:** Services operate independently.
+*   **High Cohesion:** Each service focuses on a specific business capability.
+*   **Scalability:** Individual services can be scaled independently based on demand.
+*   **Resilience:** Failure in one service does not bring down the entire system.
+
+**Technology Stack (Proposed):**
+*   **Backend Services:** Go (Golang) for high performance, concurrency, and efficiency.
+*   **Database:** PostgreSQL for relational data persistence (transactional data). Redis for caching and real-time data manipulation (e.g., session management, short-lived tracking data).
+*   **Message Broker:** Apache Kafka for high-throughput, low-latency asynchronous communication, event streaming, and real-time data ingestion (e.g., tracking updates).
+*   **Frontend (Web Application):** React with TypeScript for a robust, interactive, and modern user interface.
+*   **API Gateway:** Nginx or Kong to manage external API traffic, provide routing, load balancing, and security.
+*   **Containerization:** Docker for packaging services.
+*   **Orchestration:** Kubernetes (K8s) for deploying, scaling, and managing containerized applications.
+*   **Cloud Platform:** Amazon Web Services (AWS) for infrastructure, managed services (e.g., RDS, MSK, EKS).
+
+## 3. Core Components (Microservices)
+
+Each core component will be a standalone microservice responsible for a specific domain.
+
+---
+
+### 3.1. User and Identity Service
+
+*   **Core Functionality:** Manages user authentication (login, registration), authorization (roles, permissions), and user profiles.
+*   **Technical Design & Architecture:**
+    *   Developed in Go.
+    *   Uses PostgreSQL for user data storage.
+    *   Implements OAuth2/OpenID Connect for token-based authentication (JWTs).
+    *   Provides gRPC/REST APIs for other internal services and an exposed REST API for frontend.
+*   **User Experience:** Standard login/signup flows, profile management.
+*   **Data Management:** Stores user credentials (hashed), roles, permissions, profile information.
+    *   **Schema:** `users` table (id, email, password_hash, salt, created_at, updated_at), `roles` table, `permissions` table, `user_roles` join table.
+*   **Error Handling & Edge Cases:** Account lockout on multiple failed logins, password reset flow, token expiry handling.
+*   **Security Considerations:** Password hashing (Bcrypt), JWT signing, role-based access control (RBAC), input validation.
+*   **Performance & Scalability:** Scalable independently. JWT caching at the API Gateway.
+*   **Deployment & Infrastructure:** Deployed as a Docker container within Kubernetes.
+*   **Test-Driven Development Verification:**
+    *   **Immediate Verification:** Call login/registration API endpoints using `curl` or Postman.
+    *   **Incremental Testing:**
+        *   **Unit Tests:** Test password hashing, JWT generation/validation, database interactions (using mock SQL drivers or simple in-memory stubs for the DB layer).
+        *   **Integration Tests:** Test service with a real PostgreSQL database (e.g., using Testcontainers for a ephemeral DB instance). Verify authentication flow from a client perspective.
+    *   **Specific Tests:** Test `login` function with correct/incorrect credentials, `register` function for new/existing users, `authorize` middleware against various roles.
+*   **Testing Strategy:**
+    *   **Unit Tests:** `go test` with table-driven tests for functions. `testify/mock` for interface mocking where strict isolation is needed.
+    *   **Integration Tests:** Use `dockertest` or `Testcontainers-go` to spin up a real PostgreSQL container.
+    *   **E2E Tests:** Integrate with frontend E2E tests (Cypress) to verify login/logout.
+*   **Monitoring & Logging:** Standard access logs, error logs, and metrics for request latency, success rates.
+*   **Dependencies:** PostgreSQL.
+
+---
+
+### 3.2. Inventory Service
+
+*   **Core Functionality:** Manages product catalog, stock levels, warehouse locations, inventory adjustments (in/out), and inventory movements. Publishes events on stock changes.
+*   **Technical Design & Architecture:**
+    *   Developed in Go.
+    *   Uses PostgreSQL for inventory data.
+    *   Publishes `InventoryUpdated` events to Kafka when stock levels change.
+    *   Consumes `OrderCreated` events to reserve stock.
+*   **User Experience:** UI for managing products, viewing stock, performing adjustments, searching inventory.
+*   **Data Management:** Stores `products` (SKU, name, description, weight, dimensions), `warehouses` (name, address), `stock_levels` (product_id, warehouse_id, quantity, last_updated), `inventory_transactions` (type, product_id, quantity, source/destination, timestamp).
+    *   **Schema:** `products`, `warehouses`, `inventory_items` (linking product to warehouse with quantity), `inventory_transactions`.
+*   **Error Handling & Edge Cases:** Negative stock levels prevention, concurrent update handling (optimistic locking), handling out-of-stock scenarios (publish `OutOfStock` event).
+*   **Security Considerations:** Authorization checks for inventory adjustments, data encryption at rest.
+*   **Performance & Scalability:** High read throughput for stock levels, optimized queries. Event-driven updates via Kafka.
+*   **Deployment & Infrastructure:** Docker container in Kubernetes.
+*   **Test-Driven Development Verification:**
+    *   **Immediate Verification:** Manual API calls to check stock, add products.
+    *   **Incremental Testing:**
+        *   **Unit Tests:** Test functions for adding/updating products, calculating available stock, applying adjustments locally. Mock Kafka producer.
+        *   **Integration Tests:** Test service's interaction with PostgreSQL and simulated Kafka topic (e.g., in-memory Kafka or Testcontainers MSK). Verify stock reservation logic based on consumed `OrderCreated` events.
+    *   **Specific Tests:** `AddProduct`, `UpdateStock`, `ReserveStock` (happy path, insufficient stock), `AdjustInventory` (positive/negative adjustments).
+*   **Testing Strategy:**
+    *   **Unit Tests:** `go test` for functions manipulating inventory structures. Mock the Kafka client and a minimal DB interface.
+    *   **Integration Tests:** Spin up PostgreSQL with Testcontainers. Use `go-kafka` test double or Testcontainers for Kafka to verify event publishing/consumption.
+*   **Monitoring & Logging:** Metrics for stock levels, transaction rates, low stock alerts.
+*   **Dependencies:** PostgreSQL, Apache Kafka.
+
+---
+
+### 3.3. Order Service
+
+*   **Core Functionality:** Manages creation, modification, and lifecycle of customer orders. Coordinates with Inventory and Shipment services.
+*   **Technical Design & Architecture:**
+    *   Developed in Go.
+    *   Uses PostgreSQL for order data.
+    *   Publishes `OrderCreated`, `OrderUpdated` (status change), `OrderCancelled` events to Kafka.
+    *   Consumes `InventoryReserved` or `InventoryFailedReservation` from Inventory Service.
+*   **User Experience:** UI for placing orders, viewing order status, modifying/cancelling orders.
+*   **Data Management:** Stores `orders` (id, user_id, status, total_amount, created_at), `order_items` (order_id, product_id, quantity, price_at_time_of_order).
+    *   **Schema:** `orders`, `order_items`.
+*   **Error Handling & Edge Cases:** Handling inventory reservation failures, payment failures (out of scope for MVP but design consideration), duplicate order submissions.
+*   **Security Considerations:** Order access control based on user ownership/roles.
+*   **Performance & Scalability:** Event-driven processing for order state changes.
+*   **Deployment & Infrastructure:** Docker container in Kubernetes.
+*   **Test-Driven Development Verification:**
+    *   **Immediate Verification:** Submit a new order via API.
+    *   **Incremental Testing:**
+        *   **Unit Tests:** Test order creation logic, status transitions. Mock interactions with Inventory service (e.g., simulate `InventoryReserved` response).
+        *   **Integration Tests:** Test with PostgreSQL. Verify `OrderCreated` event publishing. Simulate receiving `InventoryReserved` event and observe order status update.
+    *   **Specific Tests:** `CreateOrder` (valid/invalid products/quantities), `UpdateOrderStatus`, `CancelOrder`.
+*   **Testing Strategy:**
+    *   **Unit Tests:** Use `go test`, `testify/mock` for mocked internal dependencies.
+    *   **Integration Tests:** Test with PostgreSQL and Kafka (Testcontainers). Use `go-kafka` testing utilities to consume and assert published events.
+*   **Monitoring & Logging:** Metrics for order creation rate, order status changes, failed orders.
+*   **Dependencies:** PostgreSQL, Apache Kafka. Depends on Inventory Service via Kafka events.
+
+---
+
+### 3.4. Shipment Service
+
+*   **Core Functionality:** Manages individual shipments, assigns tracking numbers, integrates with shipping carriers (API integrations), generates shipping labels, and updates shipment status. Provides real-time tracking data.
+*   **Technical Design & Architecture:**
+    *   Developed in Go.
+    *   Uses PostgreSQL for shipment data. Could use a time-series DB for detailed tracking history if needed later.
+    *   Publishes `ShipmentCreated`, `ShipmentStatusUpdated`, `TrackingUpdate` events to Kafka.
+    *   Consumes `OrderFulfilled` events from Order Service as trigger for shipment creation.
+    *   Exposes APIs for carrier integration webhooks/polling.
+*   **User Experience:** UI for managing shipments, generating labels, viewing tracking status. Publicly accessible tracking page (read-only).
+*   **Data Management:** Stores `shipments` (id, order_id, status, tracking_number, carrier_info, shipping_address), `tracking_events` (shipment_id, timestamp, location, status_description).
+    *   **Schema:** `shipments`, `tracking_events`.
+*   **Error Handling & Edge Cases:** Carrier API failures, invalid shipping addresses, label generation errors, duplicate tracking updates. Retries for external API calls.
+*   **Security Considerations:** Secure API keys for carrier integrations, rate limiting for tracking lookups.
+*   **Performance & Scalability:** High write throughput for tracking updates. Asynchronous processing for carrier interactions.
+*   **Deployment & Infrastructure:** Docker container in Kubernetes.
+*   **Test-Driven Development Verification:**
+    *   **Immediate Verification:** Create a shipment via API, get tracking status.
+    *   **Incremental Testing:**
+        *   **Unit Tests:** Test label generation logic, carrier API request/response parsing (using mock HTTP clients).
+        *   **Integration Tests:** Test with PostgreSQL. Simulate receiving `OrderFulfilled` event and verifying shipment creation. Test with mock carrier APIs to verify integration logic.
+    *   **Specific Tests:** `CreateShipment`, `UpdateShipmentStatus`, `GenerateShippingLabel`, `IntegrateCarrierAPI` (mocking external API calls).
+*   **Testing Strategy:**
+    *   **Unit Tests:** `go test`. Use `httptest` package to mock external HTTP calls to carrier APIs.
+    *   **Integration Tests:** Test with PostgreSQL and Kafka (Testcontainers).
+*   **Monitoring & Logging:** Metrics for shipment creation rate, carrier API success rates, tracking update frequency.
+*   **Dependencies:** PostgreSQL, Apache Kafka, External Shipping Carrier APIs.
+
+---
+
+### 3.5. Logistics Service
+
+*   **Core Functionality:** Manages transportation routes, vehicle fleet, driver assignments, and delivery schedules. Potentially integrates with mapping services for route optimization.
+*   **Technical Design & Architecture:**
+    *   Developed in Go.
+    *   Uses PostgreSQL for logistics data.
+    *   Consumes `ShipmentCreated` events.
+    *   Publishes `RouteOptimized`, `DriverAssigned` events.
+*   **User Experience:** UI for managing vehicles, drivers, creating/optimizing routes, assigning shipments to routes.
+*   **Data Management:** Stores `vehicles` (id, type, capacity), `drivers` (id, name, contact), `routes` (id, start_location, end_location, scheduled_time, assigned_vehicle, assigned_driver), `route_shipments` (route_id, shipment_id, sequence).
+    *   **Schema:** `vehicles`, `drivers`, `routes`, `route_shipments`.
+*   **Error Handling & Edge Cases:** Unfeasible routes, driver availability conflicts, vehicle capacity issues.
+*   **Security Considerations:** Access control for sensitive driver/vehicle information.
+*   **Performance & Scalability:** Route optimization can be CPU-intensive; consider dedicated processing for this.
+*   **Deployment & Infrastructure:** Docker container in Kubernetes.
+*   **Test-Driven Development Verification:**
+    *   **Immediate Verification:** Create a route, assign a driver/vehicle.
+    *   **Incremental Testing:**
+        *   **Unit Tests:** Test route optimization algorithms (with simplified data), driver/vehicle assignment logic.
+        *   **Integration Tests:** Test with PostgreSQL. Simulate `ShipmentCreated` and verify trigger for route planning. Mock mapping service API for route calculation.
+    *   **Specific Tests:** `CreateRoute`, `OptimizeRoute` (happy path, invalid input), `AssignDriver`, `AssignVehicle`.
+*   **Testing Strategy:**
+    *   **Unit Tests:** `go test`, focus on business logic of optimization.
+    *   **Integration Tests:** PostgreSQL with Testcontainers. Use `httptest` for mocking external mapping APIs.
+*   **Monitoring & Logging:** Metrics for route creation, optimization duration, vehicle utilization.
+*   **Dependencies:** PostgreSQL, Apache Kafka, Optional: External Mapping/Route Optimization APIs.
+
+---
+
+### 3.6. Workflow Automation Service
+
+*   **Core Functionality:** Orchestrates multi-step business processes based on events. Examples: Order processing flow (create -> inventory reserve -> payment -> fulfill -> ship), low stock alerts, re-order triggers.
+*   **Technical Design & Architecture:**
+    *   Developed in Go.
+    *   Listens to wide range of events from Kafka (e.g., `OrderCreated`, `ShipmentStatusUpdated`, `InventoryUpdated`).
+    *   Uses a state machine library or workflow engine (e.g., Cadence/Temporal if complexity demands, but simpler built-in state management for MVP) to manage process states.
+    *   Publishes commands or events to other services (e.g., `NotifyUser`, `TriggerReplenishment`).
+*   **User Experience:** Admin UI to define/monitor workflows (stretch goal, initially pre-defined workflows).
+*   **Data Management:** Stores workflow definitions and current state of active workflow instances (small, simple state in DB or internal state machine).
+    *   **Schema:** `workflow_instances` (id, workflow_type, current_state, entity_id, last_event, context_json).
+*   **Error Handling & Edge Cases:** Handling failed workflow steps (retries, dead-letter queues), concurrent workflow executions.
+*   **Security Considerations:** Appropriate permissions for defining/triggering workflows.
+*   **Performance & Scalability:** Highly scalable event consumers.
+*   **Deployment & Infrastructure:** Docker container in Kubernetes.
+*   **Test-Driven Development Verification:**
+    *   **Immediate Verification:** Trigger an event (e.g., `OrderCreated` via Kafka) and observe sequence of subsequent actions in logs.
+    *   **Incremental Testing:**
+        *   **Unit Tests:** Test individual workflow steps, state transitions within the state machine. Mock Kafka consumer/producer and external service calls.
+        *   **Integration Tests:** With Kafka, simulate end-to-end workflow by publishing initial event and verifying chained events and service calls.
+    *   **Specific Tests:** Define a workflow, `ProcessOrderWorkflow` (happy path, inventory failure path), `LowStockAlertWorkflow`.
+*   **Testing Strategy:**
+    *   **Unit Tests:** `go test`, mock internal state manager and Kafka interactions.
+    *   **Integration Tests:** Test with Kafka (Testcontainers), asserting events published and consumed correctly.
+*   **Monitoring & Logging:** Metrics for workflow execution rates, successful vs. failed workflows, step durations.
+*   **Dependencies:** Apache Kafka. Dependent on events from various services.
+
+---
+
+### 3.7. ERP Integration Service
+
+*   **Core Functionality:** Facilitates data synchronization and communication between Nexus and external ERP systems (e.g., SAP, Oracle, Microsoft Dynamics). Handles data mapping, transformation, and API calls/file exchanges.
+*   **Technical Design & Architecture:**
+    *   Developed in Go.
+    *   Likely uses a persistent queue (Kafka topics or internal DB queue) for reliable message delivery to ERP.
+    *   Implements specific connectors for each supported ERP system (e.g., REST API, SOAP, file-based FTP/SFTP, database direct connection where permitted).
+    *   Consumes relevant events from Kafka (e.g., `OrderCreated`, `InventoryUpdated`).
+    *   Publishes events based on ERP updates (e.g., `ERPProductUpdated`).
+*   **User Experience:** Admin UI for configuring ERP connections, mapping fields, viewing sync status and errors.
+*   **Data Management:** Stores ERP connection details (encrypted), data mapping configurations, sync logs, error queues.
+    *   **Schema:** `erp_configurations` (id, name, type, connection_details_json), `data_mappings` (erp_config_id, source_field, target_field, transformation_logic), `sync_logs` (erp_config_id, timestamp, status, message).
+*   **Error Handling & Edge Cases:** Network failures, API rate limits, data validation errors, transformations failures, partial updates. Robust retry mechanisms and dead-letter queues. Alerts for integration failures.
+*   **Security Considerations:** Secure storage of ERP credentials, IP whitelisting, OAuth for ERP APIs, fine-grained access control to integration settings.
+*   **Performance & Scalability:** Batched updates for efficient data transfer. Scalable workers for parallel processing of events.
+*   **Deployment & Infrastructure:** Docker container in Kubernetes.
+*   **Test-Driven Development Verification:**
+    *   **Immediate Verification:** Manually trigger a data sync for a small dataset.
+    *   **Incremental Testing:**
+        *   **Unit Tests:** Test data transformation functions, individual mapping rules. Mock ERP API client.
+        *   **Integration Tests:** Simulate Kafka events being consumed. Test with mock ERP systems to verify data transformation and successful API calls. Use `httptest` for mocking ERP REST APIs.
+    *   **Specific Tests:** `SyncProductsToERP`, `ProcessOrderFromERP`, `TransformData` (various mapping scenarios), `HandleERPApiError`.
+*   **Testing Strategy:**
+    *   **Unit Tests:** `go test`, focusing on data mapping and transformation logic. Mock the external ERP client.
+    *   **Integration Tests:** Test with PostgreSQL and Kafka (Testcontainers). Use `httptest` for mocking external ERP endpoints.
+    *   **Contract Tests:** If ERPs have well-defined APIs, consider contract testing (e.g., Pact) to ensure compatibility.
+*   **Monitoring & Logging:** Metrics for sync success/failure rates, data volume processed, latency of ERP interactions.
+*   **Dependencies:** PostgreSQL, Apache Kafka, various External ERP Systems.
+
+---
+
+### 3.8. Real-time Tracking Service (Backend for UI)
+
+*   **Core Functionality:** Ingests high-volume tracking data (e.g., from GPS devices, carrier updates), processes it, and serves real-time location updates to the frontend via WebSockets.
+*   **Technical Design & Architecture:**
+    *   Developed in Go.
+    *   Consumers `TrackingUpdate` events from `ShipmentService` (and potentially other sources).
+    *   Uses Redis for storing current location snapshots due to its speed and volatile nature.
+    *   Leverages WebSockets (e.g., Gorilla WebSocket or similar Go library) for real-time updates to connected clients.
+*   **User Experience:** Real-time map view of shipments, historical tracking path.
+*   **Data Management:** Redis will store `shipment_id -> latest_location` key-value pairs (JSON or GeoJSON). For historical data, this might be offloaded to a dedicated time-series database (e.g., InfluxDB) or object storage (S3) for later analysis.
+    *   **Schema (Redis):** Key: `nexus:tracking:shipment:{shipment_id}`, Value: JSON `{ "lat": x, "lon": y, "timestamp": z, "accuracy": a }`.
+*   **Error Handling & Edge Cases:** Malformed tracking data, delayed updates, disconnected clients.
+*   **Security Considerations:** Authentication/authorization for WebSocket connections, limiting tracking data access to authorized users/public tracking links.
+*   **Performance & Scalability:** Designed for high ingestion rate and high concurrent WebSocket connections. Redis is critical here. Horizontal scaling of service instances.
+*   **Deployment & Infrastructure:** Docker container in Kubernetes. Requires careful configuration of WebSocket route through API Gateway/Load Balancer.
+*   **Test-Driven Development Verification:**
+    *   **Immediate Verification:** Publish a mock `TrackingUpdate` event to Kafka via CLI, open WebSocket client (e.g., `wscat`) and verify real-time update.
+    *   **Incremental Testing:**
+        *   **Unit Tests:** Test parsing of tracking data, Redis interaction logic.
+        *   **Integration Tests:** Test with Redis. Simulate Kafka `TrackingUpdate` consumption and verify data stored in Redis. Test WebSocket server (local client connection) for real-time push.
+    *   **Specific Tests:** `ProcessTrackingUpdate` (valid/invalid data), `FetchCurrentLocation`, `HandleWebSocketConnection` (subscribe/unsubscribe).
+*   **Testing Strategy:**
+    *   **Unit Tests:** `go test`, mock Kafka consumer and Redis client.
+    *   **Integration Tests:** Test with Redis (Testcontainers). Use `github.com/gorilla/websocket/internal/client_test` or `nhooyr.io/websocket/test` for testing WebSocket server.
+*   **Monitoring & Logging:** Metrics for message ingestion rate, connected clients, WebSocket message throughput/latency.
+*   **Dependencies:** Redis, Apache Kafka. Depends on `ShipmentService` (for `TrackingUpdate` events).
+
+---
+
+### 3.9. Frontend Web Application
+
+*   **Core Functionality:** Provides a user-friendly interface for all Nexus functionalities (inventory, orders, shipping, logistics, tracking, account management).
+*   **Technical Design & Architecture:**
+    *   Developed with React and TypeScript.
+    *   Communicates with backend services via the API Gateway (RESTful APIs) and Real-time Tracking Service (WebSockets).
+    *   Uses a state management library (e.g., Redux Toolkit, Zustand).
+    *   Responsive design for various devices.
+*   **User Experience:** Intuitive navigation, clear dashboards, forms for data entry, interactive maps for tracking. Accessibility (WCAG 2.1 AA).
+*   **Data Management:** Client-side caching (e.g., React Query). No sensitive data stored locally.
+*   **Error Handling & Edge Cases:** Display user-friendly error messages, form validation, loading states, retry mechanisms for transient network issues.
+*   **Security Considerations:** Secure session management (JWTs stored in HttpOnly cookies), XSS/CSRF prevention, input sanitization.
+*   **Performance & Scalability:** Optimized for fast loading times (code splitting, lazy loading), efficient data fetching.
+*   **Deployment & Infrastructure:** Static files served from an S3 bucket via CloudFront (CDN) for fast global delivery.
+*   **Test-Driven Development Verification:**
+    *   **Immediate Verification:** Open app in browser, navigate pages, perform actions.
+    *   **Incremental Testing:**
+        *   **Unit Tests:** Test individual React components in isolation (e.g., form fields, buttons). Mock API calls.
+        *   **Integration Tests:** Test component interactions, page rendering with mocked data.
+        *   **End-to-End Tests:** Simulate user journeys (e.g., login -> create order -> view tracking) across the full stack.
+    *   **Specific Tests:** Login form submission, product search, order creation flow, real-time map update.
+*   **Testing Strategy:**
+    *   **Unit Tests:** Jest and React Testing Library for component testing.
+    *   **Integration Tests:** Jest and React Testing Library for component composition.
+    *   **End-to-End Tests:** Cypress for browser automation, covering critical user flows.
+*   **Monitoring & Logging:** Client-side error logging (e.g., Sentry), performance metrics (Lighthouse, Web Vitals).
+*   **Dependencies:** Backend API Gateway, Real-time Tracking Service.
+
+---
+
+## 4. Infrastructure and Deployment
+
+*   **Cloud Provider:** AWS
+*   **Containerization:** Docker
+*   **Orchestration:** Kubernetes (EKS - Elastic Kubernetes Service)
+*   **Database:** AWS RDS for PostgreSQL, AWS ElastiCache for Redis
+*   **Message Broker:** AWS MSK (Managed Streaming for Kafka)
+*   **Storage:** Amazon S3 for static assets (frontend, shipping labels, reports).
+*   **Networking:** AWS VPC, Load Balancers (ALB), Route 53 for DNS.
+*   **CI/CD Pipeline:** GitHub Actions or GitLab CI/CD.
+    *   **Stages:** Build (Docker images), Test (unit, integration), Scan (security), Deploy (Kubernetes manifests).
+    *   **Deployment Strategy:** Rolling updates for services. Argo CD for GitOps (declarative deployments).
+*   **Infrastructure as Code (IaC):** Terraform for provisioning and managing AWS resources and Kubernetes clusters/resources.
+
+## 5. Testing and Quality Assurance
+
+This section reiterates and expands on the TDD verification principles mentioned for each service.
+
+### 5.1. Testing Hierarchy
+
+1.  **Unit Tests (Go: `go test`, React: Jest/React Testing Library):**
+    *   **Focus:** Individual functions, methods, or components in isolation.
+    *   **Execution:** Fast, run frequently by developers.
+    *   **Coverage:** Aim for high coverage on core business logic.
+    *   **Mocking:** Minimal. Use `testify/mock` for interface mocking in Go services, Jest mocks for React components. Prefer real objects via dependency injection where applicable. Start with pure functions and simple logic. Test happy paths before edge cases.
+2.  **Integration Tests (Go: Testcontainers-go, React: React Testing Library with mocked APIs):**
+    *   **Focus:** Interactions between components within a service, or interactions between a service and its direct dependencies (database, message queue).
+    *   **Execution:** Slower than unit tests, run in CI/CD.
+    *   **Mocking:** Use lightweight test doubles for external services (e.g., `httptest` for HTTP clients). Use Testcontainers for real databases (PostgreSQL), Redis, and Kafka in ephemeral containers. Prefer real implementations (e.g., embedded databases) over complex mocks.
+3.  **End-to-End (E2E) Tests (Cypress for Frontend, Newman/Postman for API flows):**
+    *   **Focus:** Simulate critical user journeys across the entire system, including frontend, backend, and external integrations (mocked).
+    *   **Execution:** Slowest, run less frequently (e.g., nightly, before major deployments).
+    *   **Coverage:** Focus on critical paths, not every nuance.
+    *   **Strategy:** Automated browser tests (Cypress) for UI flows. API collection runners (Newman) for backend API flows. Mock external ERPs/Carriers for E2E scenarios.
+
+### 5.2. Mocking Strategy
+
+*   **Prefer Dependency Injection:** Design services with interfaces for external dependencies (database, Kafka client, HTTP clients). This allows for easy injection of test doubles.
+*   **Simple Stubs:** When external calls are unavoidable in unit tests, provide simple stub implementations that return predictable data.
+*   **Mock at System Boundaries:** Only mock external dependencies (e.g., database, Kafka, other microservices, third-party APIs) when testing a component. Avoid over-mocking internal logic.
+*   **Test Doubles Hierarchy:**
+    1.  **Real Implementations:** Use whenever possible (e.g., actual Go structs, React components).
+    2.  **Fake Implementations:** Lightweight, in-memory implementations of interfaces (e.g., an in-memory `UserRepository` for a `UserRepository` interface).
+    3.  **Stubs:** Objects that provide canned answers to calls (e.g., a function that always returns a specific product).
+    4.  **Mocks:** Objects that record calls and verify behavior. Use sparingly, primarily for verifying interactions with external systems or complex collaborators.
+
+### 5.3. Testing Tools & Frameworks
+
+*   **Go:** `testing` package (built-in), `testify/assert` (assertions), `testify/mock` (mocking), `dockertest` or `Testcontainers-go` (integration tests with real dependencies), `go-kafka` testing tools.
+*   **React:** Jest (test runner), React Testing Library (component testing), MSW (Mock Service Worker) for API mocking in development/testing.
+*   **E2E:** Cypress (frontend), Postman/Newman (API).
+
+### 5.4. Test Data Management
+
+*   **Seeding:** Use clean, predictable datasets for integration and E2E tests. Database migration tools (e.g., `goose`, `migrate`) can include test data seeding scripts.
+*   **Factories:** Develop data factories (e.g., using `gofakeit` in Go, or `faker.js` in JS) to generate realistic but predictable test data on the fly.
+*   **Cleanup:** Ensure test environments are torn down and data is purged after tests, especially for integration tests using ephemeral containers.
+
+## 6. Monitoring & Logging
+
+*   **Metrics:** Prometheus for collecting metrics (request rates, error rates, latency, resource utilization – CPU, memory). Grafana for dashboards and visualization.
+*   **Logging:** Centralized logging with the ELK Stack (Elasticsearch, Logstash, Kibana) or AWS CloudWatch Logs. Each service will log structured JSON data.
+*   **Tracing:** Distributed tracing with Jaeger or AWS X-Ray to track requests across microservices.
+*   **Alerting:** Prometheus Alertmanager integrated with PagerDuty or Slack for critical alerts. CloudWatch Alarms for infrastructure.
+*   **Health Checks:** Kubernetes liveness and readiness probes for service health.
+
+## 7. Security Considerations
+
+*   **Authentication & Authorization:** OAuth2/OpenID Connect (JWTs) for API authentication. RBAC for fine-grained authorization.
+*   **Data Encryption:** TLS/SSL for all in-transit data (internal and external APIs). Data at rest encryption for databases and storage (AWS KMS).
+*   **Input Validation:** Strict server-side validation for all inputs to prevent injection attacks (SQL, XSS, etc.).
+*   **Secrets Management:** AWS Secrets Manager or Kubernetes Secrets for credentials, API keys.
+*   **Vulnerability Scanning:** SAST (Static Application Security Testing) in CI/CD. Regular DAST (Dynamic Application Security Testing) on deployed applications. Dependency scanning for known vulnerabilities.
+*   **Network Security:** VPCs, Security Groups, Network ACLs to restrict service-to-service communication and external access.
+*   **Least Privilege:** Configure IAM roles with minimal necessary permissions for services and deployments.
+*   **Audit Logging:** Comprehensive audit trails for sensitive actions.
+
+## 8. Performance & Scalability
+
+*   **Microservices:** Enables independent scaling of services based on demand.
+*   **Go Lang:** High performance and concurrency characteristics.
+*   **Kafka:** High-throughput, distributed message broker for async tasks and event streaming.
+*   **Redis:** In-memory data store for caching and fast real-time data access.
+*   **Kubernetes Autoscaling:** Horizontal Pod Autoscaler (HPA) based on CPU/memory utilization or custom metrics. Cluster Autoscaler for underlying nodes.
+*   **Database Scaling:** AWS RDS read replicas for read-heavy services, connection pooling.
+*   **Caching:** Strategic use of Redis for frequently accessed static or slowly changing data.
+*   **Load Testing:** Conduct regular load and stress testing using tools like JMeter or k6.
+
+## 9. Dependencies
+
+*   **Internal Microservices:** All microservices are interdependent via API calls and Kafka events.
+*   **External ERP Systems:** SAP, Oracle, Microsoft Dynamics (specific versions to be confirmed).
+*   **Shipping Carriers:** FedEx, UPS, DHL, USPS (specific APIs and versions to be confirmed).
+*   **Mapping Services:** Google Maps API, OpenStreetMap (for route optimization/tracking visualization).
+*   **Payment Gateway:** (Future consideration, not in MVP) Stripe, PayPal.
+*   **Email/SMS Gateway:** AWS SES/SNS or SendGrid/Twilio.
+
+## 10. Potential Risks & Mitigations
+
+*   **Risk: Complexity of Distributed Systems (Microservices Overhead)**
+    *   **Mitigation:** Adopt strong DevOps practices, comprehensive monitoring, centralized logging, and automated CI/CD. Start with a simpler architectural pattern and evolve.
+*   **Risk: Data Consistency Across Services**
+    *   **Mitigation:** Implement eventual consistency patterns (Sagas with Kafka), idempotent consumers, and robust error handling with dead-letter queues. Monitoring metrics for data discrepancies.
+*   **Risk: Integration Challenges with Diverse ERPs/Carriers**
+    *   **Mitigation:** Start with a few popular integrations. Develop robust, configurable integration service with strong error handling and retry mechanisms. Utilize partner APIs/SDKs when available. Thorough documentation and testing.
+*   **Risk: Performance Bottlenecks with Real-time Tracking**
+    *   **Mitigation:** Leverage highly optimized technologies (Go, Kafka, Redis). Implement aggressive caching strategies. Horizontal scaling of tracking service. Conduct detailed load testing early.
+*   **Risk: Security Vulnerabilities**
+    *   **Mitigation:** Integrate security best practices throughout the SDLC (DevSecOps). Regular security audits, penetration testing, and timely patching. Strong access controls and data encryption.
+*   **Risk: Cloud Vendor Lock-in**
+    *   **Mitigation:** Design services to be cloud-agnostic where possible. Use containerization (Docker) and orchestration (Kubernetes) to maintain portability. Abstract cloud-specific services using interfaces.
+*   **Risk: Lack of Domain Expertise / Technical Debt**
+    *   **Mitigation:** Engage domain experts in requirements gathering. Prioritize clean code and refactoring. Invest in continuous learning and documentation.
+
+## 11. Implementation Timeline (High-Level Estimation)
+
+This is a high-level estimate and depends heavily on team size and experience.
+
+*   **Phase 1: Foundation & Core Services (4-6 Weeks)**
+    *   Setup initial infrastructure (Kubernetes cluster, CI/CD).
+    *   Develop User and Identity Service (Basic Auth).
+    *   Develop Inventory Service (Core CRUD, basic stock adjustments).
+    *   Develop Order Service (Core CRUD, linking to Inventory).
+    *   Develop API Gateway and initial Frontend Setup (Login, Product List).
+    *   Establish Kafka Event Bus.
+*   **Phase 2: Logistics & Shipping (6-8 Weeks)**
+    *   Develop Shipment Service (Basic creation, carrier integration framework).
+    *   Develop Logistics Service (Basic vehicle/driver management, route assignment).
+    *   Integrate Shipment/Logistics into Order workflow (via Workflow Automation).
+    *   Implement basic Real-time Tracking (ingestion, WebSockets).
+    *   Enhance Frontend for Order/Shipment tracking views.
+*   **Phase 3: Automation & Integration (8-10 Weeks)**
+    *   Refine Workflow Automation for key processes (e.g., low stock, order fulfillment).
+    *   Develop ERP Integration Service (Initial connector for one ERP).
+    *   Advanced features for Inventory/Logistics (e.g., batch tracking, advanced routing).
+    *   Comprehensive error handling and alerting.
+*   **Phase 4: Optimization, Testing & Hardening (4-6 Weeks)**
+    *   Performance tuning and load testing.
+    *   Comprehensive security audits and penetration testing.
+    *   Finalizing documentation.
+    *   Pilot program and user acceptance testing (UAT).
+*   **Ongoing:** Maintenance, new feature development, additional ERP/carrier integrations.
+
+This plan provides a comprehensive roadmap for the development of the Nexus platform, focusing on robust architecture, testability, and scalability.

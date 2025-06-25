@@ -1,0 +1,66 @@
+# Ignore artifact directories
+**/bin/
+**/obj/
+**/target/
+**/out/
+**/dist/
+
+# Ignore compiled files
+*.exe
+*.dll
+*.so
+*.o
+*.a
+*.class
+*.jar
+
+# Ignore IDE-specific files
+.idea/
+.vscode/
+*.iml
+*.swp
+
+# Ignore logs and temporary files
+*.log
+*.tmp
+*.bak
+*.swp
+.DS_Store
+
+# Ignore node modules
+node_modules/
+
+# Ignore environment files
+.env
+.env.*
+
+# Ignore Terraform state and temporary files
+.terraform/
+terraform.tfstate
+terraform.tfstate.backup
+*.tfplan
+
+# Ignore Kubernetes configuration (kubectl)
+kubeconfig
+
+# Go specific ignores
+*.mod
+*.sum
+
+# React specific ignores
+/build/
+
+# AWS specific ignores
+.ebextensions/
+.elasticbeanstalk/
+
+# Docker specific ignores
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+# Secret files (API keys, credentials)
+*.pem
+*.key
+*.crt
+credentials.json
